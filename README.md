@@ -12,7 +12,7 @@ Basically a transpilation of [DoctorMckay's excellent node implementation](https
 
 Usually you get the ticket in base64 format and the key in hex format from Steam, you will need to decode both first.
 
-If you use this function you do not have to worry about signature verification, since the encryption step does that for you.
+If you are using encrypted app tickets you can ignore signature verification, since the encryption step validates the ticket.
 
 ```go
 
@@ -63,11 +63,11 @@ app_ticket, err := steamappticket.ParseEncryptedAppTicket(ticket, false)
 - `OwnershipTicketGenerated time.Time`: The time when the ownership ticket was generated.
 - `OwnershipTicketExpires time.Time`: The time when the ownership ticket expires.
 - `Licenses []uint32`: A list of the user's licenses for the app.
-- `DLC []DLCDetails`: A list of details about the game's DLC's which the account holds.
+- `DLC []DLCDetails`: A list of details about the DLCs which the account holds.
 - `Signature []byte`: The signature of the ticket.
 - `IsExpired bool`: Indicates whether the ticket has expired.
 - `HasValidSignature bool`: Indicates whether the ticket has a valid signature.
-- `IsValid bool`: Indicates whether the ticket is valid.
+- `IsValid bool`: Indicates whether the ticket is valid (neither expired nor with an invalid signature).
 - `UserData []byte`: Additional user data associated with the ticket, created when requesting the ticket.
 
 ### DLCDetails

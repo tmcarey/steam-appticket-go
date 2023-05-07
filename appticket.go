@@ -21,6 +21,35 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+type SteamAppTicket struct {
+	SteamID                   uint64       // The Steam ID of the user who owns the ticket.
+	AuthTicket                []byte       // The raw authentication ticket for the app.
+	GCToken                   uint64       // The game connect token for the app.
+	GCTokenGenerated          time.Time    // The time when the ticket was generated.
+	SessionExternalIP         net.IP       // The external IP address of the user's session.
+	ClientConnectionTime      uint32       // The time when the client connected to the server.
+	ClientConnectionCount     uint32       // The number of times the client has connected to the server.
+	Version                   uint32       // The version of the app.
+	AppID                     uint32       // The game's Steam App ID.
+	OwnershipTicketExternalIP net.IP       // The external IP address of the user's ownership ticket.
+	OwnershipTicketInternalIP net.IP       // The internal IP address of the user's ownership ticket.
+	OwnershipFlags            uint32       // Flags associated with the ownership ticket.
+	OwnershipTicketGenerated  time.Time    // The time when the ownership ticket was generated.
+	OwnershipTicketExpires    time.Time    // The time when the ownership ticket expires.
+	Licenses                  []uint32     // A list of the user's licenses for the app.
+	DLC                       []DLCDetails // A list of details about the DLCs which the account holds.
+	Signature                 []byte       // The signature of the ticket.
+	IsExpired                 bool         // Indicates whether the ticket has expired.
+	HasValidSignature         bool         // Indicates whether the ticket has a valid signature.
+	IsValid                   bool         // Indicates whether the ticket is valid (neither expired nor with an invalid signature).
+	UserData                  []byte       // Additional user data associated with the ticket, created when requesting the ticket.
+}
+
+type DLCDetails struct {
+	AppID    uint32
+	Licenses []uint32
+}
+
 type SteamAppTicketError struct {
 	Message string
 }
@@ -40,35 +69,6 @@ MIGdMA0GCSqGSIb3DQEBAQUAA4GLADCBhwKBgQDf7BrWLBBmLBc1OhSwfFkRf53T
 gdTckPv+T1JzZsuVcNfFjrocejN1oWI0Rrtgt4Bo+hOneoo3S57G9F1fOpn5nsQ6
 6WOiu4gZKODnFMBCiQIBEQ==
 -----END PUBLIC KEY-----`))
-
-type SteamAppTicket struct {
-	SteamID                   uint64
-	AuthTicket                []byte
-	GCToken                   uint64
-	GCTokenGenerated          time.Time
-	SessionExternalIP         net.IP
-	ClientConnectionTime      uint32
-	ClientConnectionCount     uint32
-	Version                   uint32
-	AppID                     uint32
-	OwnershipTicketExternalIP net.IP
-	OwnershipTicketInternalIP net.IP
-	OwnershipFlags            uint32
-	OwnershipTicketGenerated  time.Time
-	OwnershipTicketExpires    time.Time
-	Licenses                  []uint32
-	DLC                       []DLCDetails
-	Signature                 []byte
-	IsExpired                 bool
-	HasValidSignature         bool
-	IsValid                   bool
-	UserData                  []byte
-}
-
-type DLCDetails struct {
-	AppID    uint32
-	Licenses []uint32
-}
 
 func padPKCS7(data []byte, blockSize int) []byte {
 	rem := len(data) % blockSize
@@ -150,22 +150,11 @@ func symmetricDecrypt(input []byte, key []byte, checkHmac bool) (decrypted []byt
 	return decrypted, nil
 }
 
-func ReadU32(buf *bytes.Reader) (uint32, error) {
-	var b [4]byte
-	_, err := buf.Read(b[:])
-
-	if err != nil {
-		return 0, err
-	}
-
-	return binary.LittleEndian.Uint32(b[:]), nil
-}
-
 /**
  *
- * @param {Buffer} ticket - The raw encrypted appticket
- * @param {Buffer|string} encryptionKey - The app's encryption key, as a buffer
- * @returns {object}
+ * @param {[]byte} ticket - The raw encrypted ticket
+ * @param {[]byte|string} encryptionKey - The raw encryption key
+ * @returns {SteamAppTicket}
  */
 func ParseEncryptedAppTicket(ticket []byte, key []byte) (*SteamAppTicket, error) {
 	app_ticket := &steamencryptedappticket.EncryptedAppTicket{}
@@ -235,7 +224,12 @@ func verifySignature(data []byte, signature []byte) error {
 	return err
 }
 
-// ParseAppTicket parses a Steam app or session ticket and returns its details.
+/**
+ *
+ * @param {[]byte} ticket - The raw encrypted ticket
+ * @param {bool} allowInvalidSignature - Whether to error on tickets with invalid signatures
+ * @returns {SteamAppTicket}
+ */
 func ParseAppTicket(ticket []byte, allowInvalidSignature bool) (*SteamAppTicket, error) {
 	buf := bytes.NewReader(ticket)
 	details := &SteamAppTicket{}
@@ -284,7 +278,7 @@ func ParseAppTicket(ticket []byte, allowInvalidSignature bool) (*SteamAppTicket,
 			return nil, InvalidTicketError
 		}
 
-		_, err = buf.Seek(8, 1) // unknown 1 and unknown 2
+		_, err = buf.Seek(8, 1) // filler
 
 		if err != nil {
 			return nil, InvalidTicketError
@@ -463,8 +457,8 @@ func ParseAppTicket(ticket []byte, allowInvalidSignature bool) (*SteamAppTicket,
 	hasSignature := false
 
 	if buf.Len() == 128 {
-		// Has signature
 		hasSignature = true
+
 		details.Signature = make([]byte, 128)
 		_, err = buf.Read(details.Signature)
 
