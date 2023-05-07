@@ -48,8 +48,6 @@ app_ticket, err := steamappticket.ParseEncryptedAppTicket(ticket, false)
 
 ## SteamAppTicket struct
 
-The `SteamAppTicket` struct represents a Steam app ticket and contains various fields that provide information about the ticket. Here's an overview of each field:
-
 - `AuthTicket []byte`: The raw authentication ticket for the app.
 - `SteamID uint64`: The Steam ID of the user who owns the ticket.
 - `GCToken uint64`: The game connect token for the app.
@@ -78,5 +76,3 @@ The `SteamAppTicket` struct represents a Steam app ticket and contains various f
 -	`Licenses []uint32`: Package IDs of all the licenses which give the owner access to this DLC
 
 You can read more info about how app tickets work [here](https://github.com/DoctorMcKay/node-steam-user/wiki/Steam-App-Auth).
-
-- ``
