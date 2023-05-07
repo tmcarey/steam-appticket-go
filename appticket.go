@@ -31,6 +31,7 @@ func (e *SteamAppTicketError) Error() string {
 
 var InvalidTicketError error = &SteamAppTicketError{Message: "Invalid ticket"}
 var InvalidSignatureError error = &SteamAppTicketError{Message: "Missing or Invalid Signature"}
+var DecryptionFailedError error = &SteamAppTicketError{Message: "Failed to decrypt ticket"}
 
 var SteamPublicKey, _ = pem.Decode([]byte(
 	`-----BEGIN PUBLIC KEY-----
@@ -40,11 +41,11 @@ gdTckPv+T1JzZsuVcNfFjrocejN1oWI0Rrtgt4Bo+hOneoo3S57G9F1fOpn5nsQ6
 6WOiu4gZKODnFMBCiQIBEQ==
 -----END PUBLIC KEY-----`))
 
-type SteamTicketDetails struct {
+type SteamAppTicket struct {
+	SteamID                   uint64
 	AuthTicket                []byte
 	GCToken                   uint64
-	SteamID                   uint64
-	TokenGenerated            time.Time
+	GCTokenGenerated          time.Time
 	SessionExternalIP         net.IP
 	ClientConnectionTime      uint32
 	ClientConnectionCount     uint32
@@ -105,11 +106,11 @@ func unpadPKCS7(data []byte, blockSize int) ([]byte, error) {
 	return data[:len(data)-padSize], nil
 }
 
-func SymmetricDecrypt(input []byte, key []byte, checkHmac bool) (decrypted []byte, error error) {
+func symmetricDecrypt(input []byte, key []byte, checkHmac bool) (decrypted []byte, error error) {
 	ivBlock, err := aes.NewCipher(key)
 
 	if err != nil {
-		panic("Failed to create AES cipher: " + err.Error())
+		return nil, err
 	}
 
 	// The IV is the first 16 bytes of the input
@@ -166,7 +167,7 @@ func ReadU32(buf *bytes.Reader) (uint32, error) {
  * @param {Buffer|string} encryptionKey - The app's encryption key, as a buffer
  * @returns {object}
  */
-func ParseEncryptedAppTicket(ticket []byte, key []byte) (*SteamTicketDetails, error) {
+func ParseEncryptedAppTicket(ticket []byte, key []byte) (*SteamAppTicket, error) {
 	app_ticket := &steamencryptedappticket.EncryptedAppTicket{}
 
 	if err := proto.Unmarshal(ticket, app_ticket); err != nil {
@@ -174,14 +175,14 @@ func ParseEncryptedAppTicket(ticket []byte, key []byte) (*SteamTicketDetails, er
 	}
 
 	// we decrypt in place, so the encrypted ticket is the same as the decrypted ticket after this
-	decrypted, err := SymmetricDecrypt(app_ticket.GetEncryptedTicket(), key, false)
+	decrypted, err := symmetricDecrypt(app_ticket.GetEncryptedTicket(), key, false)
+
+	if err != nil {
+		return nil, DecryptionFailedError
+	}
 
 	if crc32.ChecksumIEEE(decrypted) != app_ticket.CrcEncryptedticket {
 		return nil, InvalidTicketError
-	}
-
-	if err != nil {
-		return nil, err
 	}
 
 	encryptedUserDataCount := app_ticket.GetCbEncrypteduserdata()
@@ -235,9 +236,9 @@ func verifySignature(data []byte, signature []byte) error {
 }
 
 // ParseAppTicket parses a Steam app or session ticket and returns its details.
-func ParseAppTicket(ticket []byte, allowInvalidSignature bool) (*SteamTicketDetails, error) {
+func ParseAppTicket(ticket []byte, allowInvalidSignature bool) (*SteamAppTicket, error) {
 	buf := bytes.NewReader(ticket)
-	details := &SteamTicketDetails{}
+	details := &SteamAppTicket{}
 	var initialLength uint32
 
 	err := binary.Read(buf, binary.LittleEndian, &initialLength)
@@ -270,7 +271,7 @@ func ParseAppTicket(ticket []byte, allowInvalidSignature bool) (*SteamTicketDeta
 			return nil, InvalidTicketError
 		}
 
-		details.TokenGenerated = time.Unix(int64(tokenGenerated), 0)
+		details.GCTokenGenerated = time.Unix(int64(tokenGenerated), 0)
 
 		var sessionHeaderLength uint32
 		err = binary.Read(buf, binary.LittleEndian, &sessionHeaderLength)
