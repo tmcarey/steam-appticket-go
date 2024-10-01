@@ -43,7 +43,7 @@ import (
 ticket := base64.DecodeString('<TICKET>');
 
 /* Returns a SteamAppTicket */
-app_ticket, err := steamappticket.ParseEncryptedAppTicket(ticket, false)
+app_ticket, err := steamappticket.ParseAppTicket(ticket, false)
 ```
 
 ## SteamAppTicket struct
