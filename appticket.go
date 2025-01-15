@@ -189,18 +189,27 @@ func ParseEncryptedAppTicket(ticket []byte, key []byte) (*SteamAppTicket, error)
 
 	ownershipTicket.UserData = userData
 
-	remainder := decrypted[app_ticket.GetCbEncrypteduserdata()+ownershipTicketLength:]
+	remainderOffset := uint32(8 + 8 + 4) // Ticket v2
+	remainderStart := app_ticket.GetCbEncrypteduserdata() + ownershipTicketLength + remainderOffset
+	remainder := decrypted[remainderStart:]
 
 	if len(remainder) >= 8+20 {
-		// salted sha1 hash, next 8 bytes are salt
-		dataToHash := decrypted[:app_ticket.GetCbEncrypteduserdata()+ownershipTicketLength+8]
+		// Extract salt (first 8 bytes of remainder)
+		salt := remainder[:8]
 
+		// Prepare dataToHash (all data before the hash, including the salt)
+		dataToHash := append(decrypted[:remainderStart], salt...)
+
+		// Extract hash (next 20 bytes of remainder)
 		hash := remainder[8:28]
 
+		// Compute salted SHA-1 hash
 		hasher := sha1.New()
 		hasher.Write(dataToHash)
+		computedHash := hasher.Sum(nil)
 
-		if !bytes.Equal(hash, hasher.Sum(nil)) {
+		// Compare hashes
+		if !bytes.Equal(hash, computedHash) {
 			return nil, InvalidTicketError
 		}
 	}
