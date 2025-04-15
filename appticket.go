@@ -21,33 +21,59 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-type SteamAppTicket struct {
-	SteamID                   uint64       // The Steam ID of the user who owns the ticket.
-	AuthTicket                []byte       // The raw authentication ticket for the app.
-	GCToken                   uint64       // The game connect token for the app.
-	GCTokenGenerated          time.Time    // The time when the ticket was generated.
-	SessionExternalIP         net.IP       // The external IP address of the user's session.
-	ClientConnectionTime      uint32       // The time when the client connected to the server.
-	ClientConnectionCount     uint32       // The number of times the client has connected to the server.
-	Version                   uint32       // The version of the app.
-	AppID                     uint32       // The game's Steam App ID.
-	OwnershipTicketExternalIP net.IP       // The external IP address of the user's ownership ticket.
-	OwnershipTicketInternalIP net.IP       // The internal IP address of the user's ownership ticket.
-	OwnershipFlags            uint32       // Flags associated with the ownership ticket.
-	OwnershipTicketGenerated  time.Time    // The time when the ownership ticket was generated.
-	OwnershipTicketExpires    time.Time    // The time when the ownership ticket expires.
-	Licenses                  []uint32     // A list of the user's licenses for the app.
-	DLC                       []DLCDetails // A list of details about the DLCs which the account holds.
-	Signature                 []byte       // The signature of the ticket.
-	IsExpired                 bool         // Indicates whether the ticket has expired.
-	HasValidSignature         bool         // Indicates whether the ticket has a valid signature.
-	IsValid                   bool         // Indicates whether the ticket is valid (neither expired nor with an invalid signature).
-	UserData                  []byte       // Additional user data associated with the ticket, created when requesting the ticket.
+// SteamID represents a Steam identifier
+type SteamID uint64
+
+// AppOwnershipTicket contains ownership information for a Steam application
+type AppOwnershipTicket struct {
+	Version                   uint32    `json:"version"`
+	SteamID                   SteamID   `json:"steamID"`
+	AppID                     uint32    `json:"appID"`
+	OwnershipTicketExternalIP net.IP    `json:"ownershipTicketExternalIP"`
+	OwnershipTicketInternalIP net.IP    `json:"ownershipTicketInternalIP"`
+	OwnershipFlags            uint32    `json:"ownershipFlags"`
+	OwnershipTicketGenerated  time.Time `json:"ownershipTicketGenerated"`
+	OwnershipTicketExpires    time.Time `json:"ownershipTicketExpires"`
+	Licenses                  []uint32  `json:"licenses"`
+	DLC                       []DLCInfo `json:"dlc"`
+	Signature                 []byte    `json:"signature,omitempty"`
+	IsExpired                 bool      `json:"isExpired"`
+	HasValidSignature         bool      `json:"hasValidSignature"`
+	IsValid                   bool      `json:"isValid"`
 }
 
-type DLCDetails struct {
-	AppID    uint32
-	Licenses []uint32
+// DLCInfo contains information about downloadable content
+type DLCInfo struct {
+	AppID    uint32   `json:"appID"`
+	Licenses []uint32 `json:"licenses"`
+}
+
+// AppTicket extends AppOwnershipTicket with authentication information
+type AppTicket struct {
+	AppOwnershipTicket
+	AuthTicket            []byte    `json:"authTicket"`
+	GCToken               string    `json:"gcToken"`
+	TokenGenerated        time.Time `json:"tokenGenerated"`
+	SessionExternalIP     net.IP    `json:"sessionExternalIP"`
+	ClientConnectionTime  uint32    `json:"clientConnectionTime"`
+	ClientConnectionCount uint32    `json:"clientConnectionCount"`
+}
+
+// DecodedEncryptedAppTicket represents a decoded encrypted application ticket
+type DecodedEncryptedAppTicket struct {
+	Version                   uint32    `json:"version"`
+	SteamID                   SteamID   `json:"steamID"`
+	AppID                     uint32    `json:"appID"`
+	OwnershipTicketExternalIP string    `json:"ownershipTicketExternalIP"`
+	OwnershipTicketInternalIP string    `json:"ownershipTicketInternalIP"`
+	OwnershipFlags            uint32    `json:"ownershipFlags"`
+	OwnershipTicketGenerated  time.Time `json:"ownershipTicketGenerated"`
+	Licenses                  []uint32  `json:"licenses"`
+	DLC                       []DLCInfo `json:"dlc"`
+	UserData                  []byte    `json:"userData"`
+	Unknown2                  uint64    `json:"unknown2"`
+	Unknown3                  uint64    `json:"unknown3"`
+	Unknown4                  uint32    `json:"unknown4"`
 }
 
 type SteamAppTicketError struct {
@@ -120,10 +146,6 @@ func symmetricDecrypt(input []byte, key []byte, checkHmac bool) (decrypted []byt
 
 	dataBlock := cipher.NewCBCDecrypter(ivBlock, iv)
 
-	if err != nil {
-		return nil, err
-	}
-
 	decrypted = padPKCS7(input[16:], 16)
 
 	dataBlock.CryptBlocks(decrypted, decrypted)
@@ -156,7 +178,7 @@ func symmetricDecrypt(input []byte, key []byte, checkHmac bool) (decrypted []byt
  * @param {[]byte|string} encryptionKey - The raw encryption key
  * @returns {SteamAppTicket}
  */
-func ParseEncryptedAppTicket(ticket []byte, key []byte) (*SteamAppTicket, error) {
+func ParseEncryptedAppTicket(ticket []byte, key []byte) (*DecodedEncryptedAppTicket, error) {
 	app_ticket := &steamencryptedappticket.EncryptedAppTicket{}
 
 	if err := proto.Unmarshal(ticket, app_ticket); err != nil {
@@ -173,7 +195,6 @@ func ParseEncryptedAppTicket(ticket []byte, key []byte) (*SteamAppTicket, error)
 	if crc32.ChecksumIEEE(decrypted) != app_ticket.CrcEncryptedticket {
 		return nil, InvalidTicketError
 	}
-
 	encryptedUserDataCount := app_ticket.GetCbEncrypteduserdata()
 
 	ownershipTicketLength := binary.LittleEndian.Uint32(decrypted[encryptedUserDataCount : encryptedUserDataCount+4])
@@ -184,28 +205,61 @@ func ParseEncryptedAppTicket(ticket []byte, key []byte) (*SteamAppTicket, error)
 		return nil, err
 	}
 
+	decodedTicket := &DecodedEncryptedAppTicket{
+		Version:                   ownershipTicket.Version,
+		SteamID:                   ownershipTicket.SteamID,
+		AppID:                     ownershipTicket.AppID,
+		OwnershipTicketExternalIP: ownershipTicket.OwnershipTicketExternalIP.String(),
+		OwnershipTicketInternalIP: ownershipTicket.OwnershipTicketInternalIP.String(),
+		OwnershipFlags:            ownershipTicket.OwnershipFlags,
+		OwnershipTicketGenerated:  ownershipTicket.OwnershipTicketGenerated,
+		Licenses:                  ownershipTicket.Licenses,
+		DLC:                       ownershipTicket.DLC,
+	}
+
 	// the beginning is the user-supplied data
 	userData := decrypted[0:app_ticket.GetCbEncrypteduserdata()]
 
-	ownershipTicket.UserData = userData
+	decodedTicket.UserData = userData
 
-	remainder := decrypted[app_ticket.GetCbEncrypteduserdata()+ownershipTicketLength:]
+	remainderOffset := 0
+	if app_ticket.TicketVersionNo == 2 {
+		remainderOffset += 8 + 8 + 4
+		readOffset := app_ticket.CbEncrypteduserdata + ownershipTicketLength
+
+		// Read Unknown2 (uint64)
+		unknown2 := binary.LittleEndian.Uint64(decrypted[readOffset:])
+		decodedTicket.Unknown2 = unknown2
+		readOffset += 8
+
+		// Read Unknown3 (uint64)
+		unknown3 := binary.LittleEndian.Uint64(decrypted[readOffset:])
+		decodedTicket.Unknown3 = unknown3
+		readOffset += 8
+
+		// Read Unknown4 (uint32)
+		decodedTicket.Unknown4 = binary.LittleEndian.Uint32(decrypted[readOffset:])
+	}
+
+	remainder := decrypted[app_ticket.GetCbEncrypteduserdata()+ownershipTicketLength+uint32(remainderOffset):]
 
 	if len(remainder) >= 8+20 {
 		// salted sha1 hash, next 8 bytes are salt
-		dataToHash := decrypted[:app_ticket.GetCbEncrypteduserdata()+ownershipTicketLength+8]
+		dataToHash := decrypted[:app_ticket.GetCbEncrypteduserdata()+ownershipTicketLength+uint32(remainderOffset)]
 
+		salt := remainder[:8]
 		hash := remainder[8:28]
 
 		hasher := sha1.New()
 		hasher.Write(dataToHash)
+		hasher.Write(salt)
 
 		if !bytes.Equal(hash, hasher.Sum(nil)) {
 			return nil, InvalidTicketError
 		}
 	}
 
-	return ownershipTicket, nil
+	return decodedTicket, nil
 }
 
 func verifySignature(data []byte, signature []byte) error {
@@ -230,9 +284,9 @@ func verifySignature(data []byte, signature []byte) error {
  * @param {bool} allowInvalidSignature - Whether to error on tickets with invalid signatures
  * @returns {SteamAppTicket}
  */
-func ParseAppTicket(ticket []byte, allowInvalidSignature bool) (*SteamAppTicket, error) {
+func ParseAppTicket(ticket []byte, allowInvalidSignature bool) (*AppTicket, error) {
 	buf := bytes.NewReader(ticket)
-	details := &SteamAppTicket{}
+	details := &AppTicket{}
 	var initialLength uint32
 
 	err := binary.Read(buf, binary.LittleEndian, &initialLength)
@@ -265,7 +319,7 @@ func ParseAppTicket(ticket []byte, allowInvalidSignature bool) (*SteamAppTicket,
 			return nil, InvalidTicketError
 		}
 
-		details.GCTokenGenerated = time.Unix(int64(tokenGenerated), 0)
+		details.TokenGenerated = time.Unix(int64(tokenGenerated), 0)
 
 		var sessionHeaderLength uint32
 		err = binary.Read(buf, binary.LittleEndian, &sessionHeaderLength)
@@ -420,9 +474,9 @@ func ParseAppTicket(ticket []byte, allowInvalidSignature bool) (*SteamAppTicket,
 		return nil, InvalidTicketError
 	}
 
-	details.DLC = make([]DLCDetails, dlcCount)
+	details.DLC = make([]DLCInfo, dlcCount)
 	for i := 0; i < int(dlcCount); i++ {
-		dlc := DLCDetails{}
+		dlc := DLCInfo{}
 		err = binary.Read(buf, binary.LittleEndian, &dlc.AppID)
 
 		if err != nil {
